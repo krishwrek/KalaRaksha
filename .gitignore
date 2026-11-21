@@ -31,6 +31,16 @@ ENV/
 env/
 .venv/
 
+# Environment variables & secrets (CRITICAL: Never commit secrets)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.cert
+credentials.json
+secrets.json
+
 # IDE & Editor files
 .vscode/
 .idea/
@@ -42,7 +52,8 @@ env/
 Thumbs.db
 desktop.ini
 
-# Local generated reports (optional exports)
+# Local generated reports and temporary test outputs
 outputs/*.pdf
 outputs/*.csv
+outputs/*.png
 !outputs/.gitkeep

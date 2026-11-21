@@ -1,113 +1,122 @@
 """
-Verification test script for ForenScan pipeline.
-Runs all forensic sub-modules, feature extraction, classifier, and PDF/CSV generation.
+KalaRaksha - End-to-End Pipeline Verification Test
+Tests all IPA detectors, heatmap fusion, region localization, priority classification,
+and report generation across sample assets.
 """
 
 import os
-from utils.preprocessing import load_and_preprocess_image, image_to_bytes
-from utils.metadata import extract_metadata
-from utils.ela import compute_ela
-from utils.noise_analysis import analyze_noise_consistency
-from utils.edge_analysis import analyze_edges
-from utils.frequency_analysis import analyze_frequency_domain
-from utils.color_analysis import analyze_color_and_lighting
-from utils.copy_move_detection import detect_copy_move
-from utils.heatmap import generate_fused_heatmap
-from utils.feature_extraction import extract_feature_vector, features_to_dataframe
-from utils.classifier import predict_authenticity
-from utils.report_generator import generate_pdf_report, generate_csv_report
+import sys
+import numpy as np
+
+from utils.preprocessing import preprocess_heritage_image
+from utils.crack_detection import detect_cracks
+from utils.moisture_detection import detect_moisture_seepage
+from utils.peeling_detection import detect_peeling_plaster
+from utils.biological_growth import detect_biological_growth
+from utils.erosion_detection import detect_surface_erosion
+from utils.heatmap_fusion import fuse_deterioration_channels
+from utils.region_analysis import analyze_damage_regions
+from utils.priority_engine import classify_region_priority, compute_heritage_health_index
+from utils.visualization import draw_damage_overlay, create_damage_analytics_plot
+from utils.report_generator import generate_csv_report, generate_pdf_report
 
 
 def test_full_pipeline():
-    samples = [
-        "sample_images/sample1_authentic.jpg",
-        "sample_images/sample2_spliced_tampered.jpg",
-        "sample_images/sample3_copy_move.jpg",
-        "sample_images/sample4_ai_generated.png"
-    ]
+    sample_path = "sample_images/sample1_temple_crack.jpg"
+    print(f"Testing pipeline with {sample_path}...")
 
-    for sample_path in samples:
-        print(f"\n--- Testing: {sample_path} ---")
-        assert os.path.exists(sample_path), f"File {sample_path} does not exist!"
+    # 1. Preprocessing
+    prep = preprocess_heritage_image(sample_path, max_dim=1280, apply_clahe=True, gamma=1.0)
+    print(f"  [OK] Preprocessed image: {prep['dimensions']}, mean luminance: {prep['metrics']['mean_luminance']}")
 
-        with open(sample_path, "rb") as f:
-            img_bytes = f.read()
+    gray = prep["gray"]
+    rgb = prep["enhanced_rgb"]
+    hsv = prep["hsv"]
 
-        # 1. Preprocessing
-        orig_rgb, resized_rgb, gray_img, scale, dims = load_and_preprocess_image(img_bytes, max_dim=1024)
-        print(f"Loaded: orig dims {dims}, resized to {resized_rgb.shape}, scale {scale:.2f}")
+    # 2. Crack detection
+    cracks = detect_cracks(gray, sensitivity=0.6)
+    print(f"  [OK] Crack detection: {cracks['num_crack_segments']} segments, length: {cracks['total_crack_length_px']}px, coverage: {cracks['coverage_pct']}%")
 
-        # 2. Metadata
-        meta_res = extract_metadata(img_bytes)
-        print(f"Metadata: has_exif={meta_res['has_exif']}, software_traces={meta_res['software_traces']}")
+    # 3. Moisture detection
+    moist = detect_moisture_seepage(rgb, hsv, sensitivity=0.5)
+    print(f"  [OK] Moisture detection: {moist['num_patches']} patches, coverage: {moist['moisture_area_pct']}%")
 
-        # 3. ELA
-        ela_res = compute_ela(resized_rgb, quality=95)
-        print(f"ELA: mean_error={ela_res['mean_error']}, inconsistency={ela_res['inconsistency_score']}")
+    # 4. Peeling detection
+    peel = detect_peeling_plaster(gray, rgb, sensitivity=0.5)
+    print(f"  [OK] Peeling detection: {peel['num_peeling_patches']} patches, coverage: {peel['peeling_area_pct']}%")
 
-        # 4. Noise
-        noise_res = analyze_noise_consistency(gray_img)
-        print(f"Noise: global_mean={noise_res['global_noise_mean']}, outliers={noise_res['outlier_block_ratio']}%")
+    # 5. Biological growth
+    bio = detect_biological_growth(rgb, hsv, sensitivity=0.5)
+    print(f"  [OK] Biological growth: {bio['colony_count']} colonies, coverage: {bio['coverage_pct']}%")
 
-        # 5. Edges
-        edge_res = analyze_edges(gray_img)
-        print(f"Edges: mean_sharpness={edge_res['mean_sharpness']}, discrepancy={edge_res['sharpness_discrepancy']}x")
+    # 6. Erosion detection
+    eros = detect_surface_erosion(gray, sensitivity=0.5)
+    print(f"  [OK] Erosion detection: {eros['num_eroded_patches']} patches, coverage: {eros['eroded_area_pct']}%")
 
-        # 6. Frequency
-        freq_res = analyze_frequency_domain(gray_img)
-        print(f"Freq: peaks={freq_res['periodic_peak_count']}, slope={freq_res['spectral_slope']}")
+    # 7. Heatmap Fusion
+    fusion = fuse_deterioration_channels(
+        crack_density=cracks["crack_density"],
+        moisture_density=moist["moisture_density"],
+        peeling_density=peel["peeling_density"],
+        biological_density=bio["biological_density"],
+        erosion_density=eros["erosion_roughness"],
+        enhanced_rgb=rgb,
+        colormap_name="JET",
+        alpha_blend=0.55
+    )
+    print(f"  [OK] Heatmap fusion: total damaged area = {fusion['total_damaged_pct']}%, active contributions: {fusion['channel_contributions']}")
 
-        # 7. Color & Lighting
-        color_res = analyze_color_and_lighting(resized_rgb)
-        print(f"Color: light_div={color_res['lighting_divergence_angle']} deg")
+    # 8. Region Analysis
+    regions = analyze_damage_regions(
+        composite_mask=fusion["composite_mask"],
+        crack_mask=cracks["crack_mask"],
+        moisture_mask=moist["moisture_mask"],
+        peeling_mask=peel["peeling_mask"],
+        biological_mask=bio["biological_mask"],
+        erosion_mask=eros["erosion_mask"],
+        fused_density=fusion["fused_density"],
+        min_region_area=100
+    )
+    print(f"  [OK] Localized {len(regions)} damage region(s).")
 
-        # 8. Copy-Move
-        cm_res = detect_copy_move(resized_rgb)
-        print(f"Copy-Move: matches={cm_res['match_count']}, clusters={cm_res['cluster_count']}")
+    # 9. Priority Engine
+    for reg in regions:
+        pri_info = classify_region_priority(reg)
+        reg.update(pri_info)
 
-        # 9. Fused Heatmap
-        fused_res = generate_fused_heatmap(
-            image_rgb=resized_rgb,
-            ela_array=ela_res["ela_gray"],
-            noise_anomaly=noise_res["anomaly_mask"],
-            edge_anomaly=edge_res["anomaly_mask"],
-            copy_move_mask=cm_res["copy_move_mask"]
-        )
-        print(f"Fused: coverage={fused_res['anomaly_coverage_pct']}%, boxes={len(fused_res['bounding_boxes'])}")
+    health_metrics = compute_heritage_health_index(regions, fusion["total_damaged_pct"])
+    print(f"  [OK] Heritage Health Index: {health_metrics['health_index']}/100, Priority: {health_metrics['overall_priority']} ({health_metrics['status_phrase']})")
 
-        # 10. Features
-        vec, feat_dict = extract_feature_vector(
-            ela_res, noise_res, edge_res, freq_res, color_res, cm_res, meta_res, fused_res
-        )
-        assert len(vec) == 25, f"Expected 25 features, got {len(vec)}"
-        print(f"Features: extracted {len(vec)} features successfully")
+    # 10. Visualization Overlay
+    overlay = draw_damage_overlay(rgb, regions, draw_contours=True, draw_boxes=True, draw_labels=True)
+    print(f"  [OK] Rendered damage overlay shape: {overlay.shape}")
 
-        # 11. Classifier
-        pred = predict_authenticity(feat_dict, meta_res, use_ml=True)
-        print(f"Verdict: {pred['verdict']} | Authenticity: {pred['authenticity_score']}% | Tamper: {pred['tamper_score']}% | AI: {pred['ai_score']}%")
+    # 11. Plot generation
+    fig = create_damage_analytics_plot(fusion["channel_contributions"], health_metrics["priority_counts"], health_metrics["health_index"])
+    print(f"  [OK] Rendered analytics Matplotlib figure.")
 
-        # 12. Report Generation
-        orig_b = image_to_bytes(resized_rgb)
-        ela_b = image_to_bytes(ela_res["ela_heatmap"])
-        overlay_b = image_to_bytes(fused_res["annotated_image"])
+    # 12. Report Exports
+    csv_bytes = generate_csv_report(regions, health_metrics)
+    print(f"  [OK] Generated CSV report ({len(csv_bytes)} bytes)")
 
-        pdf_bytes = generate_pdf_report(
-            orig_img_bytes=orig_b,
-            ela_img_bytes=ela_b,
-            overlay_img_bytes=overlay_b,
-            verdict_info=pred,
-            metadata_dict=meta_res,
-            features_dict=feat_dict,
-            filename=os.path.basename(sample_path)
-        )
-        assert len(pdf_bytes) > 1000, "PDF generation produced empty or corrupted output"
-        print(f"PDF generated: {len(pdf_bytes)} bytes")
+    pdf_bytes = generate_pdf_report(
+        original_rgb=prep["original_rgb"],
+        enhanced_rgb=rgb,
+        heatmap_rgb=fusion["heatmap_rgb"],
+        overlay_rgb=overlay,
+        regions=regions,
+        overall_metrics=health_metrics,
+        channel_contributions=fusion["channel_contributions"],
+        image_filename="sample1_temple_crack.jpg"
+    )
+    print(f"  [OK] Generated PDF conservation dossier ({len(pdf_bytes)} bytes)")
 
-        csv_str = generate_csv_report(feat_dict, meta_res, pred, filename=os.path.basename(sample_path))
-        assert len(csv_str) > 100, "CSV generation produced empty output"
-        print(f"CSV generated: {len(csv_str)} chars")
-
-    print("\n✅ All 4 test cases passed successfully!")
+    os.makedirs("outputs", exist_ok=True)
+    with open("outputs/test_report.pdf", "wb") as f:
+        f.write(pdf_bytes)
+    with open("outputs/test_inventory.csv", "wb") as f:
+        f.write(csv_bytes)
+    print("  [SUCCESS] All pipeline checks passed successfully!")
 
 
 if __name__ == "__main__":

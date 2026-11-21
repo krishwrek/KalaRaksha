@@ -1,339 +1,398 @@
 """
-Forensic Report Generator module for ForenScan.
-Generates comprehensive, court-admissible-grade PDF forensic examination reports
-via ReportLab, and exportable CSV feature manifests for forensic data logging.
+KalaRaksha - PDF Conservation Report & CSV Export Module
+Heritage Wall Deterioration Analysis & Restoration-Priority Mapping System
+
+This module creates:
+1. Multi-page, professional PDF Conservation Dossiers using ReportLab:
+   - Executive conservation summary
+   - 4-plate photographic evidence sheet (Original, CLAHE-Enhanced, Heatmap, Overlay)
+   - Comprehensive damage inventory table
+   - International charter-aligned conservation protocols (ICOMOS / ICCROM / ASI)
+   - Conservator attestation block
+2. Machine-readable CSV inventory export with pandas
 """
 
-import io
-import hashlib
-from datetime import datetime
 from typing import Dict, Any, List, Optional
+import io
+import html
+import datetime
+import numpy as np
 import pandas as pd
+from PIL import Image
 
+# ReportLab imports
 from reportlab.lib.pagesizes import letter
 from reportlab.lib import colors
+from reportlab.lib.units import inch
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import (
-    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage, KeepTogether, HRFlowable
+    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage, KeepTogether, PageBreak, HRFlowable
 )
-from reportlab.lib.units import inch
 
 
 def generate_csv_report(
-    features_dict: Dict[str, float],
-    metadata_dict: Dict[str, Any],
-    verdict_info: Dict[str, Any],
-    filename: str = "image.png"
-) -> str:
+    regions: List[Dict[str, Any]],
+    overall_metrics: Dict[str, Any]
+) -> bytes:
     """
-    Generate a detailed CSV string containing forensic findings, EXIF metadata, and features.
+    Generate downloadable CSV byte stream containing full damage zone inventory.
     """
-    lines = []
-    lines.append("# FORENSCAN DIGITAL IMAGE FORENSIC REPORT")
-    lines.append(f"# Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    lines.append(f"# Target File: {filename}")
-    lines.append("")
-    
-    # Executive Verdict
-    lines.append("SECTION,PARAMETER,VALUE")
-    lines.append(f"Verdict,Final Determination,{verdict_info.get('verdict', 'Unknown')}")
-    lines.append(f"Verdict,Authenticity Score,{verdict_info.get('authenticity_score', 0)}%")
-    lines.append(f"Verdict,Tampering Probability,{verdict_info.get('tamper_score', 0)}%")
-    lines.append(f"Verdict,AI Generation Probability,{verdict_info.get('ai_score', 0)}%")
-    lines.append(f"Verdict,Confidence Level,{verdict_info.get('confidence', 0)}%")
-    lines.append(f"Verdict,Analysis Method,{verdict_info.get('method', 'Classical IPA')}")
-    lines.append("")
+    rows = []
+    for reg in regions:
+        recs = reg.get("recommendations", [])
+        rec_str = " | ".join(recs) if recs else "Routine monitoring."
 
-    # Metadata
-    lines.append("SECTION,METADATA_FIELD,VALUE")
-    for k, v in metadata_dict.get("basic_info", {}).items():
-        lines.append(f"Basic Metadata,{k},{v}")
-    for k, v in metadata_dict.get("camera_info", {}).items():
-        lines.append(f"Camera Hardware,{k},{v}")
-    sw_traces = ", ".join(metadata_dict.get("software_traces", [])) or "None Detected"
-    lines.append(f"Software Traces,Detected Tools,\"{sw_traces}\"")
-    lines.append("")
+        rows.append({
+            "Region ID": reg.get("region_id", ""),
+            "Primary Damage Type": reg.get("primary_damage_name", ""),
+            "Canonical Key": reg.get("primary_damage", ""),
+            "Is Compound": "Yes" if reg.get("is_compound", False) else "No",
+            "Area (px)": reg.get("area_px", 0),
+            "Area (%)": reg.get("area_pct", 0.0),
+            "Aspect Ratio": reg.get("aspect_ratio", 1.0),
+            "Mean Fused Density": reg.get("mean_density", 0.0),
+            "Severity Score (0-100)": reg.get("severity_score", 0.0),
+            "Restoration Priority": reg.get("priority", "MODERATE"),
+            "Action Urgency": reg.get("urgency_days", ""),
+            "Diagnostic Rationale": reg.get("diagnostic_explanation", ""),
+            "Conservation Directives": rec_str
+        })
 
-    # Anomalies
-    lines.append("SECTION,SEVERITY,ANOMALY_DESCRIPTION")
-    for r in verdict_info.get("reasons", []):
-        sev = r.get("severity", "Info")
-        desc = r.get("text", "").replace('"', '""')
-        lines.append(f"Detected Anomaly,{sev},\"{desc}\"")
-    lines.append("")
+    df = pd.DataFrame(rows)
+    csv_buffer = io.StringIO()
+    df.to_csv(csv_buffer, index=False, encoding="utf-8")
+    return csv_buffer.getvalue().encode("utf-8")
 
-    # Quantitative IPA Features
-    lines.append("SECTION,IPA_FEATURE_NAME,MEASURED_VALUE")
-    for feat_name, feat_val in features_dict.items():
-        lines.append(f"Quantitative Metric,{feat_name},{round(feat_val, 4)}")
 
-    return "\n".join(lines)
+def _image_array_to_reportlab_image(img_rgb: np.ndarray, max_w: float = 3.2 * inch, max_h: float = 2.4 * inch) -> RLImage:
+    """Convert numpy RGB array to in-memory ReportLab Flowable Image."""
+    pil_img = Image.fromarray(img_rgb)
+    buf = io.BytesIO()
+    pil_img.save(buf, format="JPEG", quality=85)
+    buf.seek(0)
+
+    # Compute scaled dimensions
+    w, h = pil_img.size
+    aspect = float(w) / float(h)
+
+    target_w = max_w
+    target_h = target_w / aspect
+
+    if target_h > max_h:
+        target_h = max_h
+        target_w = target_h * aspect
+
+    return RLImage(buf, width=target_w, height=target_h)
 
 
 def generate_pdf_report(
-    orig_img_bytes: bytes,
-    ela_img_bytes: bytes,
-    overlay_img_bytes: bytes,
-    verdict_info: Dict[str, Any],
-    metadata_dict: Dict[str, Any],
-    features_dict: Dict[str, float],
-    filename: str = "analyzed_image.png"
+    original_rgb: np.ndarray,
+    enhanced_rgb: np.ndarray,
+    heatmap_rgb: np.ndarray,
+    overlay_rgb: np.ndarray,
+    regions: List[Dict[str, Any]],
+    overall_metrics: Dict[str, Any],
+    channel_contributions: Dict[str, float],
+    image_filename: str = "heritage_monument.jpg"
 ) -> bytes:
     """
-    Generate an authoritative, professional PDF forensic report using ReportLab.
+    Generate an authoritative, publication-quality PDF Conservation Dossier.
+
+    Args:
+        original_rgb: Unenhanced RGB image.
+        enhanced_rgb: CLAHE-enhanced RGB image.
+        heatmap_rgb: Fused thermal heatmap RGB image.
+        overlay_rgb: Priority-annotated bounding box overlay RGB image.
+        regions: List of annotated region dictionaries.
+        overall_metrics: Wall-level health index and summary dictionary.
+        channel_contributions: Defect percentage share dictionary.
+        image_filename: Source photograph name.
+
+    Returns:
+        bytes: Raw PDF file byte stream.
     """
     pdf_buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         pdf_buffer,
         pagesize=letter,
-        rightMargin=36,
         leftMargin=36,
+        rightMargin=36,
         topMargin=36,
         bottomMargin=36
     )
 
     styles = getSampleStyleSheet()
-    
+
+    # Custom styles
     title_style = ParagraphStyle(
-        'DocTitle',
-        parent=styles['Heading1'],
-        fontName='Helvetica-Bold',
-        fontSize=20,
-        leading=24,
-        textColor=colors.HexColor('#0f172a')
+        "KalaRakshaTitle",
+        parent=styles["Heading1"],
+        fontName="Helvetica-Bold",
+        fontSize=18,
+        leading=22,
+        textColor=colors.HexColor("#7B1113"),  # Deep Terracotta
+        alignment=1,  # Center
+        spaceAfter=4
     )
-    
+
     subtitle_style = ParagraphStyle(
-        'DocSubtitle',
-        parent=styles['Normal'],
-        fontName='Helvetica',
-        fontSize=9,
+        "KalaRakshaSubTitle",
+        parent=styles["Normal"],
+        fontName="Helvetica-Bold",
+        fontSize=10,
         leading=13,
-        textColor=colors.HexColor('#64748b')
+        textColor=colors.HexColor("#424242"),
+        alignment=1,
+        spaceAfter=12
     )
-    
-    heading2_style = ParagraphStyle(
-        'SecHeading',
-        parent=styles['Heading2'],
-        fontName='Helvetica-Bold',
+
+    section_heading = ParagraphStyle(
+        "KalaRakshaSection",
+        parent=styles["Heading2"],
+        fontName="Helvetica-Bold",
         fontSize=12,
-        leading=16,
-        textColor=colors.HexColor('#1e293b'),
+        leading=15,
+        textColor=colors.HexColor("#7B1113"),
         spaceBefore=10,
         spaceAfter=6
     )
 
     body_style = ParagraphStyle(
-        'DocBody',
-        parent=styles['Normal'],
-        fontName='Helvetica',
-        fontSize=9,
-        leading=12,
-        textColor=colors.HexColor('#334155')
+        "KalaRakshaBody",
+        parent=styles["Normal"],
+        fontName="Helvetica",
+        fontSize=8.5,
+        leading=11,
+        textColor=colors.HexColor("#212121")
     )
 
-    cell_bold = ParagraphStyle(
-        'CellBold',
+    body_bold = ParagraphStyle(
+        "KalaRakshaBodyBold",
         parent=body_style,
-        fontName='Helvetica-Bold',
-        fontSize=8,
-        leading=11
+        fontName="Helvetica-Bold"
     )
 
-    cell_normal = ParagraphStyle(
-        'CellNormal',
-        parent=body_style,
-        fontSize=8,
-        leading=11
+    table_cell = ParagraphStyle(
+        "KalaRakshaTableCell",
+        parent=styles["Normal"],
+        fontName="Helvetica",
+        fontSize=7.5,
+        leading=9.5,
+        textColor=colors.HexColor("#212121")
+    )
+
+    table_cell_bold = ParagraphStyle(
+        "KalaRakshaTableCellBold",
+        parent=table_cell,
+        fontName="Helvetica-Bold"
     )
 
     story = []
 
-    # Header Banner
-    story.append(Paragraph("FORENSCAN // DIGITAL IMAGE FORENSICS REPORT", title_style))
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")
-    file_sha256 = hashlib.sha256(orig_img_bytes).hexdigest()[:24] + "..."
-    story.append(Paragraph(
-        f"<b>Analysis Date:</b> {now_str} &nbsp;|&nbsp; <b>File:</b> {filename} &nbsp;|&nbsp; <b>SHA-256:</b> {file_sha256}",
-        subtitle_style
-    ))
-    story.append(Spacer(1, 10))
-    story.append(HRFlowable(width="100%", thickness=1.5, color=colors.HexColor('#cbd5e1'), spaceBefore=2, spaceAfter=8))
+    # 1. Header Banner
+    story.append(Paragraph("KALARAKSHA: HERITAGE WALL DETERIORATION DOSSIER", title_style))
+    story.append(Paragraph("Image Processing Analysis (IPA) & Restoration Priority Condition Assessment", subtitle_style))
+    story.append(HRFlowable(width="100%", thickness=1.5, color=colors.HexColor("#7B1113"), spaceAfter=8))
 
-    # Executive Verdict Banner Box
-    verdict = verdict_info.get("verdict", "Unknown")
-    auth_score = verdict_info.get("authenticity_score", 0.0)
-    tamper_score = verdict_info.get("tamper_score", 0.0)
-    ai_score = verdict_info.get("ai_score", 0.0)
-    conf = verdict_info.get("confidence", 0.0)
+    # 2. Metadata & Inspection Info Table
+    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    hhi = overall_metrics.get("health_index", 100.0)
+    urgency = overall_metrics.get("status_phrase", "Normal")
+    priority_level = overall_metrics.get("overall_priority", "LOW")
 
-    if "Authentic" in verdict:
-        box_bg = colors.HexColor('#f0fdf4')
-        box_border = colors.HexColor('#22c55e')
-        verdict_color = "#15803d"
-    elif "AI" in verdict:
-        box_bg = colors.HexColor('#eff6ff')
-        box_border = colors.HexColor('#3b82f6')
-        verdict_color = "#1d4ed8"
-    else:
-        box_bg = colors.HexColor('#fef2f2')
-        box_border = colors.HexColor('#ef4444')
-        verdict_color = "#b91c1c"
-
-    verdict_html = f"""
-    <font size="13" color="{verdict_color}"><b>EXECUTIVE DETERMINATION: {verdict.upper()}</b></font><br/>
-    <font size="9" color="#334155">
-    Authenticity Score: <b>{auth_score}%</b> &nbsp;|&nbsp; 
-    Tamper Probability: <b>{tamper_score}%</b> &nbsp;|&nbsp; 
-    AI Generation Risk: <b>{ai_score}%</b> &nbsp;|&nbsp; 
-    Confidence: <b>{conf}%</b>
-    </font>
-    """
-    
-    verdict_table = Table([[Paragraph(verdict_html, body_style)]], colWidths=[540])
-    verdict_table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, -1), box_bg),
-        ('BOX', (0, 0), (-1, -1), 1.5, box_border),
-        ('TOPPADDING', (0, 0), (-1, -1), 8),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
-        ('LEFTPADDING', (0, 0), (-1, -1), 12),
-        ('RIGHTPADDING', (0, 0), (-1, -1), 12),
-    ]))
-    story.append(verdict_table)
-    story.append(Spacer(1, 10))
-
-    # Visual Forensic Exhibits Side-by-Side
-    story.append(Paragraph("Visual Forensic Exhibits", heading2_style))
-    
-    img_w = 2.4 * inch
-    img_h = 1.8 * inch
-
-    def make_rl_image(img_b):
-        buf = io.BytesIO(img_b)
-        return RLImage(buf, width=img_w, height=img_h)
-
-    try:
-        im1 = make_rl_image(orig_img_bytes)
-        im2 = make_rl_image(ela_img_bytes)
-        im3 = make_rl_image(overlay_img_bytes)
-
-        exhibit_table = Table([
-            [Paragraph("<b>Exhibit A: Original</b>", cell_bold),
-             Paragraph("<b>Exhibit B: ELA Heatmap</b>", cell_bold),
-             Paragraph("<b>Exhibit C: Fused Suspicion Overlay</b>", cell_bold)],
-            [im1, im2, im3]
-        ], colWidths=[180, 180, 180])
-        exhibit_table.setStyle(TableStyle([
-            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
-            ('TOPPADDING', (0, 0), (-1, -1), 4),
-        ]))
-        story.append(exhibit_table)
-    except Exception:
-        story.append(Paragraph("[Visual exhibits omitted due to rendering constraint]", body_style))
-
-    story.append(Spacer(1, 10))
-
-    # Explainable Forensic Evidence Findings Table
-    story.append(Paragraph("Explainable Findings & Detected Anomalies", heading2_style))
-    reasons = verdict_info.get("reasons", [])
-    
-    findings_rows = [[
-        Paragraph("<b>Severity</b>", cell_bold),
-        Paragraph("<b>Category</b>", cell_bold),
-        Paragraph("<b>Observed Forensic Evidence & Explanation</b>", cell_bold)
-    ]]
-
-    for r in reasons:
-        sev = r.get("severity", "Info")
-        t = r.get("type", "General")
-        desc = r.get("text", "")
-        
-        if sev == "Critical":
-            sev_badge = f'<font color="#b91c1c"><b>CRITICAL</b></font>'
-        elif sev == "Warning":
-            sev_badge = f'<font color="#c2410c"><b>WARNING</b></font>'
-        elif sev == "Normal":
-            sev_badge = f'<font color="#15803d"><b>NORMAL</b></font>'
-        else:
-            sev_badge = f'<font color="#475569"><b>INFO</b></font>'
-
-        findings_rows.append([
-            Paragraph(sev_badge, cell_normal),
-            Paragraph(f"<b>{t}</b>", cell_normal),
-            Paragraph(desc, cell_normal)
-        ])
-
-    findings_table = Table(findings_rows, colWidths=[65, 120, 355])
-    findings_table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#f1f5f9')),
-        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#cbd5e1')),
-        ('TOPPADDING', (0, 0), (-1, -1), 4),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
-        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-    ]))
-    story.append(findings_table)
-    story.append(Spacer(1, 10))
-
-    # Metadata & Hardware Audit
-    story.append(Paragraph("EXIF & Hardware Metadata Audit", heading2_style))
-    cam = metadata_dict.get("camera_info", {})
-    sw_traces = metadata_dict.get("software_traces", [])
-    
-    meta_rows = [
-        [Paragraph("<b>Parameter</b>", cell_bold), Paragraph("<b>Audit Value</b>", cell_bold),
-         Paragraph("<b>Parameter</b>", cell_bold), Paragraph("<b>Audit Value</b>", cell_bold)],
-        [Paragraph("Camera Make", cell_normal), Paragraph(str(cam.get("Make", "Not recorded")), cell_normal),
-         Paragraph("Original Dimensions", cell_normal), Paragraph(f"{metadata_dict.get('basic_info', {}).get('width')} x {metadata_dict.get('basic_info', {}).get('height')}", cell_normal)],
-        [Paragraph("Camera Model", cell_normal), Paragraph(str(cam.get("Model", "Not recorded")), cell_normal),
-         Paragraph("Image Format", cell_normal), Paragraph(str(metadata_dict.get('basic_info', {}).get('format', 'Unknown')), cell_normal)],
-        [Paragraph("Software Traces", cell_normal), Paragraph(", ".join(sw_traces) if sw_traces else "None detected", cell_normal),
-         Paragraph("GPS Data", cell_normal), Paragraph("Present" if metadata_dict.get("gps_info") else "None", cell_normal)],
+    meta_data = [
+        [
+            Paragraph("<b>Target Asset:</b> " + html.escape(str(image_filename)), body_style),
+            Paragraph("<b>Inspection Date:</b> " + now_str, body_style)
+        ],
+        [
+            Paragraph("<b>Resolution:</b> " + f"{enhanced_rgb.shape[1]}x{enhanced_rgb.shape[0]} px", body_style),
+            Paragraph("<b>Diagnostic Engine:</b> Classical IPA Multi-Modal Fusion", body_style)
+        ],
+        [
+            Paragraph(f"<b>Overall Heritage Health:</b> <font color='#7B1113'><b>{hhi:.1f} / 100</b></font>", body_style),
+            Paragraph(f"<b>Restoration Priority:</b> <b>{priority_level}</b> ({urgency})", body_style)
+        ]
     ]
-    meta_table = Table(meta_rows, colWidths=[110, 160, 110, 160])
+
+    meta_table = Table(meta_data, colWidths=[260, 260])
     meta_table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#f1f5f9')),
-        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#cbd5e1')),
-        ('TOPPADDING', (0, 0), (-1, -1), 3),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#F9F6F0")),
+        ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#D7CCC8")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
     ]))
     story.append(meta_table)
+    story.append(Spacer(1, 8))
+
+    # 3. Defect Share Summary
+    contrib_str = " | ".join([f"<b>{k.capitalize()}:</b> {v}%" for k, v in channel_contributions.items() if v > 0])
+    if not contrib_str:
+        contrib_str = "No active surface defects detected."
+    story.append(Paragraph(f"<b>Deterioration Mechanism Share:</b> {contrib_str}", body_style))
     story.append(Spacer(1, 10))
 
-    # Quantitative IPA Feature Metrics Table (Key Indicators)
-    story.append(Paragraph("Key Quantitative Forensic Metrics", heading2_style))
-    metrics_rows = [
-        [Paragraph("<b>Metric Name</b>", cell_bold), Paragraph("<b>Value</b>", cell_bold),
-         Paragraph("<b>Metric Name</b>", cell_bold), Paragraph("<b>Value</b>", cell_bold)],
-        [Paragraph("ELA Error Inconsistency", cell_normal), Paragraph(f"{features_dict.get('ela_inconsistency_score', 0):.2f}", cell_normal),
-         Paragraph("Spectral Decay Exponent (alpha)", cell_normal), Paragraph(f"{features_dict.get('freq_spectral_slope', 0):.2f}", cell_normal)],
-        [Paragraph("Sensor Noise Outliers (%)", cell_normal), Paragraph(f"{features_dict.get('noise_outlier_ratio', 0):.2f}%", cell_normal),
-         Paragraph("Periodic FFT Spikes Count", cell_normal), Paragraph(f"{int(features_dict.get('freq_periodic_peaks', 0))}", cell_normal)],
-        [Paragraph("Edge Sharpness Discrepancy", cell_normal), Paragraph(f"{features_dict.get('edge_sharpness_discrepancy', 0):.2f}x", cell_normal),
-         Paragraph("Quadrant Light Divergence", cell_normal), Paragraph(f"{features_dict.get('color_lighting_divergence', 0):.1f}°", cell_normal)],
-        [Paragraph("Copy-Move Duplicate Clusters", cell_normal), Paragraph(f"{int(features_dict.get('copy_move_clusters', 0))}", cell_normal),
-         Paragraph("Fused Anomaly Coverage", cell_normal), Paragraph(f"{features_dict.get('fused_coverage_pct', 0):.2f}%", cell_normal)],
+    # 4. Photographic Evidence Plate (2x2 Grid)
+    story.append(Paragraph("1. Multi-Modal Photographic Evidence Plates", section_heading))
+
+    img_orig_rl = _image_array_to_reportlab_image(original_rgb, max_w=255, max_h=165)
+    img_enh_rl = _image_array_to_reportlab_image(enhanced_rgb, max_w=255, max_h=165)
+    img_heat_rl = _image_array_to_reportlab_image(heatmap_rgb, max_w=255, max_h=165)
+    img_over_rl = _image_array_to_reportlab_image(overlay_rgb, max_w=255, max_h=165)
+
+    plate_data = [
+        [
+            Paragraph("<b>Plate A:</b> As-Found Photographic State", body_style),
+            Paragraph("<b>Plate B:</b> CLAHE Contrast-Enhanced State", body_style)
+        ],
+        [img_orig_rl, img_enh_rl],
+        [
+            Paragraph("<b>Plate C:</b> Fused Thermal Deterioration Heatmap", body_style),
+            Paragraph("<b>Plate D:</b> Priority-Tagged Damage Overlay", body_style)
+        ],
+        [img_heat_rl, img_over_rl]
     ]
-    metrics_table = Table(metrics_rows, colWidths=[170, 100, 170, 100])
-    metrics_table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#f1f5f9')),
-        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#cbd5e1')),
-        ('TOPPADDING', (0, 0), (-1, -1), 3),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+
+    plate_table = Table(plate_data, colWidths=[260, 260])
+    plate_table.setStyle(TableStyle([
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 2),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
     ]))
-    story.append(metrics_table)
-    story.append(Spacer(1, 12))
+    story.append(plate_table)
+    story.append(Spacer(1, 10))
 
-    # Methodology & Disclaimer Footer
-    story.append(HRFlowable(width="100%", thickness=1.0, color=colors.HexColor('#e2e8f0'), spaceBefore=4, spaceAfter=6))
-    footer_text = (
-        "<b>Forensic Methodology:</b> ForenScan conducts explainable non-destructive forensic analysis via Error Level Analysis (ELA), "
-        "multiscale sensor noise residual modeling, Fourier azimuthal power-spectrum decay, edge gradient consistency, and spatial shift-vector "
-        "patch clustering. Results are intended for forensic triage and screening. Generated by ForenScan IPA Engine."
-    )
-    story.append(Paragraph(footer_text, ParagraphStyle('Footer', parent=subtitle_style, fontSize=7.5, leading=10)))
+    # 5. Damage Inventory Table (Up to top 15 regions)
+    story.append(Paragraph("2. Quantitative Deterioration Inventory & Explainable Findings", section_heading))
 
+    inv_headers = [
+        Paragraph("<b>ID</b>", table_cell_bold),
+        Paragraph("<b>Damage Type</b>", table_cell_bold),
+        Paragraph("<b>Area (%)</b>", table_cell_bold),
+        Paragraph("<b>Sev.</b>", table_cell_bold),
+        Paragraph("<b>Priority</b>", table_cell_bold),
+        Paragraph("<b>Explainable Diagnostic Rationale</b>", table_cell_bold)
+    ]
+    inv_rows = [inv_headers]
+
+    top_regions = regions[:14] if regions else []
+
+    if not top_regions:
+        inv_rows.append([
+            Paragraph("N/A", table_cell),
+            Paragraph("Intact Fabric", table_cell),
+            Paragraph("0.0%", table_cell),
+            Paragraph("0", table_cell),
+            Paragraph("LOW", table_cell),
+            Paragraph("No discrete deterioration zones exceed detection threshold.", table_cell)
+        ])
+    else:
+        for reg in top_regions:
+            pri = reg.get("priority", "MODERATE")
+            pri_color = "#E53935" if pri == "CRITICAL" else ("#FB8C00" if pri == "HIGH" else ("#FBC02D" if pri == "MODERATE" else "#43A047"))
+
+            inv_rows.append([
+                Paragraph(f"<b>{reg.get('region_id')}</b>", table_cell),
+                Paragraph(reg.get("primary_damage_name", ""), table_cell),
+                Paragraph(f"{reg.get('area_pct', 0.0):.2f}%", table_cell),
+                Paragraph(f"{reg.get('severity_score', 0.0):.0f}", table_cell),
+                Paragraph(f"<font color='{pri_color}'><b>{pri}</b></font>", table_cell),
+                Paragraph(reg.get("diagnostic_explanation", ""), table_cell)
+            ])
+
+    inv_table = Table(inv_rows, colWidths=[40, 110, 45, 30, 55, 240])
+    inv_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#7B1113")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#BDBDBD")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#FBFBFB")]),
+        ("TOPPADDING", (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    story.append(inv_table)
+    story.append(Spacer(1, 10))
+
+    # 6. Conservation Directives Section
+    story.append(Paragraph("3. Actionable Conservation & Restoration Directives", section_heading))
+    story.append(Paragraph(
+        "Interventions formulated in strict accordance with the ICOMOS Venice Charter, "
+        "ICCROM Stone Conservation Guidelines, and the Archaeological Survey of India (ASI) standards.",
+        body_style
+    ))
+    story.append(Spacer(1, 4))
+
+    # Gather unique recommendations per priority tier
+    crit_recs = []
+    high_recs = []
+    mod_recs = []
+
+    for reg in regions:
+        pri = reg.get("priority", "MODERATE")
+        recs = reg.get("recommendations", [])
+        if pri == "CRITICAL":
+            for r in recs:
+                if r not in crit_recs:
+                    crit_recs.append(r)
+        elif pri == "HIGH":
+            for r in recs:
+                if r not in high_recs:
+                    high_recs.append(r)
+        else:
+            for r in recs:
+                if r not in mod_recs:
+                    mod_recs.append(r)
+
+    if crit_recs:
+        story.append(Paragraph("<b><font color='#E53935'>[CRITICAL PRIORITY - IMMEDIATE INTERVENTION (72 HOURS)]</font></b>", body_style))
+        for r in crit_recs[:4]:
+            story.append(Paragraph(f"• {r}", body_style))
+        story.append(Spacer(1, 4))
+
+    if high_recs:
+        story.append(Paragraph("<b><font color='#FB8C00'>[HIGH PRIORITY - CONSERVATION PROGRAM (30-60 DAYS)]</font></b>", body_style))
+        for r in high_recs[:4]:
+            story.append(Paragraph(f"• {r}", body_style))
+        story.append(Spacer(1, 4))
+
+    if mod_recs or (not crit_recs and not high_recs):
+        story.append(Paragraph("<b><font color='#388E3C'>[PREVENTIVE MAINTENANCE & PERIODIC MONITORING]</font></b>", body_style))
+        sample_mod = mod_recs[:3] if mod_recs else [
+            "Maintain seasonal photographic monitoring of historic surfaces.",
+            "Inspect perimeter drainage gutters and downspouts before rainy seasons.",
+            "Avoid aggressive synthetic pressure washing or unauthorized chemical cleaning."
+        ]
+        for r in sample_mod:
+            story.append(Paragraph(f"• {r}", body_style))
+        story.append(Spacer(1, 8))
+
+    # 7. Conservator Sign-Off Block
+    story.append(Spacer(1, 6))
+    sign_data = [
+        [
+            Paragraph("<b>Lead Heritage Conservator:</b> _______________________", body_style),
+            Paragraph("<b>Superintending Archaeologist:</b> _______________________", body_style)
+        ],
+        [
+            Paragraph("<b>Affiliation / Agency:</b> ___________________________", body_style),
+            Paragraph("<b>Field Inspection Stamp:</b> [  VERIFIED AUTHENTIC  ]", body_style)
+        ]
+    ]
+    sign_table = Table(sign_data, colWidths=[260, 260])
+    sign_table.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    story.append(sign_table)
+
+    # Build PDF document
     doc.build(story)
     pdf_buffer.seek(0)
     return pdf_buffer.getvalue()

@@ -1,0 +1,50 @@
+{
+  "model_name": "KalaRaksha-Hybrid-IPA-RandomForest",
+  "version": "1.0.0",
+  "training_timestamp": "2026-11-21T14:25:36.762701",
+  "classes": [
+    "crack",
+    "moisture",
+    "peeling",
+    "biological",
+    "erosion",
+    "compound"
+  ],
+  "feature_names": [
+    "area_pct",
+    "aspect_ratio",
+    "circularity",
+    "extent",
+    "mean_l",
+    "std_l",
+    "mean_a",
+    "mean_b",
+    "mean_h",
+    "std_h",
+    "mean_s",
+    "std_s",
+    "mean_v",
+    "std_v",
+    "mean_exg",
+    "sobel_energy",
+    "local_variance",
+    "laplacian_roughness",
+    "relative_luminance_drop",
+    "hough_linear_support"
+  ],
+  "metrics": {
+    "cross_val_accuracy_mean": 1.0,
+    "cross_val_accuracy_std": 0.0,
+    "test_accuracy": 1.0
+  },
+  "top_features": {
+    "mean_exg": 0.1558,
+    "hough_linear_support": 0.1116,
+    "aspect_ratio": 0.1078,
+    "sobel_energy": 0.0911,
+    "relative_luminance_drop": 0.0826,
+    "laplacian_roughness": 0.0689,
+    "local_variance": 0.0581,
+    "extent": 0.0475
+  }
+}
