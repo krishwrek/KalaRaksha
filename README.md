@@ -1,10 +1,12 @@
 # 🏛️ KalaRaksha: Heritage-Wall Deterioration Analysis & Restoration-Priority Mapping
 
 [![Python](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.15-blue.svg)](https://www.python.org/)
-[![Streamlit](https://img.shields.io/badge/Streamlit-1.30+-FF4B4B.svg)](https://streamlit.io/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.110+-009688.svg)](https://fastapi.tiangolo.com/)
+[![React](https://img.shields.io/badge/React-19-61DAFB.svg)](https://react.dev/)
+[![Tailwind CSS](https://img.shields.io/badge/Tailwind-v4-38B2AC.svg)](https://tailwindcss.com/)
+[![Cloudflare Pages](https://img.shields.io/badge/Deploy-Cloudflare%20Pages-F38020.svg)](https://pages.cloudflare.com/)
 [![OpenCV](https://img.shields.io/badge/OpenCV-4.8+-5C3EE8.svg)](https://opencv.org/)
-[![Scikit-Image](https://img.shields.io/badge/scikit--image-0.21+-orange.svg)](https://scikit-image.org/)
-[![ReportLab](https://img.shields.io/badge/ReportLab-PDF%20Dossier-brightgreen.svg)](https://www.reportlab.com/)
+[![Scikit-Learn](https://img.shields.io/badge/scikit--learn-1.4+-F7931E.svg)](https://scikit-learn.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 > **KalaRaksha** (काल रक्षा — *"Preserving the Legacy of Time"*) is an explainable **Image Processing Analysis (IPA)** system designed for the digital conservation of heritage temple walls, murals, historical cave frescoes, sculptures, and stone masonry.
@@ -177,28 +179,75 @@ Generate 5 synthetic heritage wall photographs for testing:
 python create_sample_assets.py
 ```
 
-### 4. Run Verification Test Suite
-Verify that all 5 IPA detectors, heatmap fusion, and ReportLab PDF generator operate smoothly:
+### 4. Run Verification Test Suites
+Verify that all 5 IPA detectors, ML classification, and security endpoints operate with zero vulnerabilities:
 ```bash
 python test_pipeline.py
+python test_security.py
 ```
 
-### 5. Launch the Streamlit Application
+### 5. Launch Full-Stack Application
+
+#### Step A: Launch Production FastAPI Backend
+```bash
+uvicorn api:app --host 0.0.0.0 --port 8000 --reload
+```
+Swagger API docs: `http://localhost:8000/docs`
+
+#### Step B: Launch Independent React + Tailwind Frontend
+```bash
+cd frontend
+npm install
+npm run dev
+```
+Open your browser at `http://localhost:5173`.
+
+*(Optional Legacy Streamlit Mode)*
 ```bash
 streamlit run app.py
 ```
-Open your browser at `http://localhost:8501`.
 
 ---
 
-## 🖼️ Included Sample Assets (Demo Mode)
+## ⛅ Cloudflare Deployment Guide
 
-The system includes 5 authentic synthetic sample wall photographs ready for instant testing:
-1. **🏛️ Ancient Granite Temple Wall:** Deep structural fracture with diagonal joint displacement and branching hairline fissures.
-2. **🎨 Historic Cave Mural Fresco:** Rising damp and water seepage plume with mineral tide lines and salt efflorescence ring.
-3. **🏛️ Painted Palace Plaster:** Severe flaking paint with curled boundary ridges and exposed raw terracotta brick underlayer.
-4. **🗿 Carved Sandstone Bas-Relief:** Green algae biofilm and bryophyte moss colonies settled in relief carvings.
-5. **🏛️ Weathered Sandstone Pillar:** Granular surface erosion, alveolar honeycomb pitting, and lost decorative relief.
+KalaRaksha's independent frontend is optimized for **Cloudflare Pages** static & edge hosting:
+
+### 1. Build the Production Bundle
+```bash
+cd frontend
+npm run build
+```
+This generates a minified, tree-shaken static bundle in `frontend/dist/` with edge security headers (`_headers`) and SPA routing (`_redirects`).
+
+### 2. Deploy via Wrangler CLI
+```bash
+# Login to your Cloudflare account
+npx wrangler login
+
+# Deploy directly to Cloudflare Pages
+npx wrangler pages deploy frontend/dist --project-name kalaraksha
+```
+
+### 3. Or Connect via GitHub CI/CD
+1. Go to [Cloudflare Dashboard](https://dash.cloudflare.com/) > **Workers & Pages** > **Create application** > **Pages** > **Connect to Git**.
+2. Select repository: `https://github.com/krishwrek/KalaRaksha`.
+3. Configure build settings:
+   - **Framework preset:** `Vite`
+   - **Root directory:** `frontend`
+   - **Build command:** `npm run build`
+   - **Build output directory:** `dist`
+4. Click **Save and Deploy**. Every push to `main` will automatically build and deploy your site to `https://kalaraksha.pages.dev`!
+
+---
+
+## 🖼️ Authentic Heritage Benchmarks
+
+The system includes 4 authentic Indian monument photographs ready for instant diagnostic benchmarking:
+1. **🏛️ Konark Sun Temple (Deula, Odisha):** 13th-century Kalinga architecture, multi-tiered khondalite stone weathering.
+2. **🛕 Golden Dravidian Gopuram:** Dravidian temple gateway tower with multi-tiered sculpted stucco relief.
+3. **💧 Carved Subterranean Stepwell (Vav):** Western Indian subterranean masonry with moisture seepage bands and subterranean salt efflorescence.
+4. **🏰 Ornate Rajasthani Sandstone Jharokha:** Intricate fretted sandstone lattice facade showing atmospheric patina and edge weathering.
 
 ---
 
@@ -238,6 +287,6 @@ If you use KalaRaksha in research or heritage conservation projects, please cite
   author = {KalaRaksha Conservation Intelligence Team},
   title = {KalaRaksha: An IPA-Based Heritage-Wall Deterioration Analysis and Restoration-Priority Mapping System},
   year = {2026},
-  url = {https://github.com/your-username/kalaraksha}
+  url = {https://github.com/krishwrek/KalaRaksha}
 }
 ```
